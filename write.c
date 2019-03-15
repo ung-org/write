@@ -17,62 +17,79 @@
  *
  */
 
+#define _XOPEN_SOURCE 700
+
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <utmpx.h>
+#include <time.h>
 #include <unistd.h>
 
-const char *write_desc = "write to another user";
-const char *write_inv  = "write user_name [terminal]";
-
-int
-main(int argc, char **argv)
+int main(int argc, char *argv[])
 {
-  char *user, *tty;
-  char *buf;
-  char line[PATH_MAX];
-  size_t nread, len = 0;
-  struct utmpx *ut;
-  FILE *out;
+	char *user = NULL;
+	char *terminal = NULL;
 
-  if (argc < 2 || argc > 3) {
-    return 1;
-  } else if (argc == 2) {
-    user = argv[1];
-    tty = NULL;
-  } else {
-    user = argv[1];
-    tty = argv[2];
-  }
+	setlocale(LC_ALL, "");
 
-  setutxent();
-  while ((ut = getutxent()) != NULL) {
-    if ((ut->ut_type == USER_PROCESS || ut->ut_type == LOGIN_PROCESS) && !strcmp (user, ut->ut_user)) {
-      if (tty == NULL)
-        break;
-      else if (!strcmp (tty, ut->ut_line))
-        break;
-    }
-  }
-  endutxent();
+	int c;
+	while ((c = getopt(argc, argv, "")) != -1) {
+		return 1;
+	}
 
-  if (ut == NULL)
-    return 1;
+	if (argc == optind + 1) {
+		user = argv[optind];
+	} else if (argc == optind + 2) {
+		user = argv[optind];
+		terminal = argv[optind + 1];
+	} else {
+		return 1;
+	}
 
-  strcat (line, "/dev/");
-  strcat (line, ut->ut_line);
-  out = fopen (line, "w");
-  fprintf (out, "Message from %s (%s) [%s]...\n", getlogin(), ttyname(fileno(stdin)), "FIXME");
-  while (!feof(stdin)) {
-    if ((nread = getline (&buf, &len, stdin)) != -1)
-      fwrite (buf, sizeof(char), nread, out);
-    free (buf);
-    len = 0;
-  }
-  fprintf (out, "EOT\n");
-  fclose (out);
+	struct utmpx *ut = NULL;
+	setutxent();
+	while ((ut = getutxent()) != NULL) {
+		if ((ut->ut_type == USER_PROCESS || ut->ut_type == LOGIN_PROCESS) && !strcmp(user, ut->ut_user)) {
+			if (terminal == NULL || !strcmp(terminal, ut->ut_line)) {
+				break;
+			}
+		}
+	}
+	endutxent();
 
-  return 0;
+	if (ut == NULL) {
+		return 1;
+	}
+
+	char line[PATH_MAX];
+	sprintf(line, "/dev/%s", ut->ut_line);
+	FILE *out = fopen(line, "w");
+
+	char date[PATH_MAX];
+	time_t now = time(NULL);
+	struct tm *tm = localtime(&now);
+	strftime(date, sizeof(date), "%c", tm);
+	terminal = ttyname(STDIN_FILENO);
+	if (!strncmp(terminal, "/dev/", 5)) {
+		terminal += 5;
+	}
+	fprintf(out, "Message from %s (%s) [%s]...\n", getlogin(), terminal, date);
+
+	printf("\a\a");
+	fflush(stdout);
+
+	ssize_t nread = 0;
+	size_t len = 0;
+	char *buf = NULL;
+	while ((nread = getline(&buf, &len, stdin)) != -1) {
+		fwrite(buf, 1, nread, out);
+	}
+
+	fprintf(out, "EOT\n");
+	fclose(out);
+
+	return 0;
 }
